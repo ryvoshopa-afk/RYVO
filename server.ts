@@ -85,7 +85,43 @@ function saveSettings(settings: GlobalSettings) {
   }
 }
 
-// API Endpoints
+// ========================================================
+// 🛠️ إعدادات وتكامل CJ Dropshipping API لمتجر ريفو
+// ========================================================
+const CJ_API_URL = 'https://api.cjdropshipping.com/api2.0/v1';
+let cjAccessToken = '';
+
+// دالة جلب وتحديث توكن الأمان من سيرفرات CJ تلقائياً
+async function getCJAccessToken() {
+  try {
+    const response = await fetch(`${CJ_API_URL}/authentication/getAccessToken`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appId: process.env.CJ_APP_ID,
+        appSecret: process.env.CJ_SECRET_KEY
+      })
+    });
+    
+    const result = await response.json() as any;
+
+    if (result && result.data && result.data.accessToken) {
+      cjAccessToken = result.data.accessToken;
+      console.log('✔ تم الاتصال وتحديث توكن الأمان لـ CJ Dropshipping بنجاح.');
+      return cjAccessToken;
+    } else {
+      console.error('❌ فشل استخراج التوكن من رد سيرفر CJ:', result);
+    }
+  } catch (error) {
+    console.error('❌ خطأ أثناء الاتصال بـ CJ Dropshipping Auth:', error);
+  }
+  return null;
+}
+
+// ========================================================
+// 🗺️ روابط واجهة برمجة التطبيقات (API Endpoints)
+// ========================================================
+
 app.get("/api/global-settings", (req, res) => {
   res.json(getSettings());
 });
@@ -109,7 +145,47 @@ app.post("/api/global-settings", (req, res) => {
   res.json({ success: true, settings: updated });
 });
 
-// Vite frontend routing middleware setup
+// رابط جلب المنتجات من CJ للمتجر مع دعم البحث والصفحات ديناميكياً
+app.get("/api/cj/products", async (req, res) => {
+  try {
+    if (!cjAccessToken) {
+      await getCJAccessToken();
+    }
+
+    const search = (req.query.search as string) || '';
+    const pageNumber = (req.query.pageNumber as string) || '1';
+    const pageSize = (req.query.pageSize as string) || '20';
+
+    const fetchUrl = new URL(`${CJ_API_URL}/product/list`);
+    fetchUrl.searchParams.append('pageNumber', pageNumber);
+    fetchUrl.searchParams.append('pageSize', pageSize);
+    if (search) {
+      fetchUrl.searchParams.append('searchName', search);
+    }
+
+    const response = await fetch(fetchUrl.toString(), {
+      method: 'GET',
+      headers: { 'CJ-Access-Token': cjAccessToken }
+    });
+
+    const data = await response.json() as any;
+
+    // معالجة انتهاء صلاحية التوكن المفاجئ لتحديثه تلقائياً دون تعطل العميل
+    if (data && (data.code === 401 || data.code === 2003)) {
+      await getCJAccessToken();
+      return res.status(401).json({ message: "جاري تحديث الجلسة مع المورد، يرجى المحاولة مرة أخرى خلال ثوانٍ." });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('❌ خطأ في جلب البيانات من CJ Dropshipping:', error);
+    res.status(500).json({ error: 'فشل جلب المنتجات من المورد الرئيسي' });
+  }
+});
+
+// ========================================================
+// 🚀 إعداد تشغيل سيرفر وموجهات Vite
+// ========================================================
 async function setupViteRouter() {
   if (process.env.NODE_ENV !== "production") {
     console.log("Starting server in DEVELOPMENT mode with Vite Middleware...");
@@ -135,3 +211,4 @@ async function setupViteRouter() {
 setupViteRouter().catch((err) => {
   console.error("Fatal error during server startup:", err);
 });
+
